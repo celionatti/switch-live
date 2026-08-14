@@ -1,0 +1,28 @@
+{
+    "name": "switch/live",
+    "description": "Switch Framework Live SPA-like Navigation, AJAX Partial Swapping & History Engine",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "celionatti",
+            "homepage": "https://github.com/celionatti"
+        }
+    ],
+    "require": {
+        "php": ">=8.2"
+    },
+    "autoload": {
+        "files": [
+            "src/helpers.php"
+        ],
+        "psr-4": {
+            "Switch\\Live\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Switch\\Live\\Tests\\": "tests/"
+        }
+    }
+}
