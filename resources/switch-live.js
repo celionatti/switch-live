@@ -651,13 +651,17 @@
                 '.switch-transition-fade { transition: opacity 0.2s ease-in-out; }',
                 '.switch-transition-out { opacity: 0; transform: translateY(-4px); }',
                 '.switch-transition-in { opacity: 1; transform: translateY(0); }',
-                '#switch-live-toasts { position: fixed; bottom: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }',
-                '.switch-toast { padding: 12px 18px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #fff; background: #1e293b; box-shadow: 0 10px 25px rgba(0,0,0,0.2); transform: translateY(20px); opacity: 0; transition: transform 0.25s ease, opacity 0.25s ease; pointer-events: auto; }',
+                '#switch-live-toasts { position: fixed; bottom: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; max-width: 420px; width: 100%; box-sizing: border-box; }',
+                '.switch-toast { padding: 12px 18px; border-radius: 8px; font-size: 14px; line-height: 1.4; font-weight: 500; color: #fff; background: #1e293b; box-shadow: 0 10px 25px rgba(0,0,0,0.2); transform: translateY(20px); opacity: 0; transition: transform 0.25s ease, opacity 0.25s ease; pointer-events: auto; word-break: break-word; }',
                 '.switch-toast-visible { transform: translateY(0); opacity: 1; }',
                 '.switch-toast-success { background: #10b981; }',
                 '.switch-toast-error { background: #ef4444; }',
                 '.switch-toast-warning { background: #f59e0b; }',
-                '.switch-toast-info { background: #3b82f6; }'
+                '.switch-toast-info { background: #3b82f6; }',
+                '@media (max-width: 640px) {',
+                '    #switch-live-toasts { left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); width: auto; max-width: none; align-items: stretch; }',
+                '    .switch-toast { text-align: center; font-size: 13.5px; padding: 10px 14px; border-radius: 10px; }',
+                '}'
             ].join('\n');
             document.head.appendChild(style);
         },
