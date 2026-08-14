@@ -1,5 +1,5 @@
 /**
- * Switch Live JS — Ultra-Fast, Zero-Dependency SPA & Partial Navigation Engine.
+ * Switch Live JS — Ultra-Fast, Zero-Dependency SPA, DOM Morphing, Polling, Lazy, Infinite Scroll & Event Engine.
  *
  * (c) celionatti — Switch Framework
  */
@@ -12,13 +12,41 @@
         options: {
             defaultTarget: '[switch-live-root], #app, main, body',
             timeout: 10000,
-            activeClass: 'switch-loading'
+            activeClass: 'switch-loading',
+            progressBar: true
         },
 
+        prefetchCache: {},
+        debounceTimers: {},
+        activePolls: [],
+        observers: [],
+
         init: function () {
+            this.injectStyles();
+            this.setupProgressBar();
+            this.setupToastContainer();
+
             document.addEventListener('click', this.handleClick.bind(this), false);
             document.addEventListener('submit', this.handleSubmit.bind(this), false);
+            document.addEventListener('input', this.handleInput.bind(this), false);
+            document.addEventListener('change', this.handleChange.bind(this), false);
+            document.addEventListener('mouseover', this.handleMouseOver.bind(this), false);
             window.addEventListener('popstate', this.handlePopState.bind(this), false);
+
+            this.scanDynamicDirectives();
+
+            // Observe DOM mutations to auto-scan dynamically added components
+            var mutationObserver = new MutationObserver(this.debounce(this.scanDynamicDirectives.bind(this), 100));
+            mutationObserver.observe(document.body, { childList: true, subtree: true });
+
+            // Handle visibility change for polling
+            document.addEventListener('visibilitychange', function () {
+                if (document.hidden) {
+                    SwitchLive.pausePolling();
+                } else {
+                    SwitchLive.resumePolling();
+                }
+            });
         },
 
         isLiveElement: function (el) {
@@ -51,14 +79,38 @@
             // Don't intercept external links or modified clicks (ctrl/cmd click)
             if (anchor.target === '_blank' || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
 
+            // Confirmation check
+            var confirmMsg = anchor.getAttribute('switch-confirm');
+            if (confirmMsg && !window.confirm(confirmMsg)) {
+                e.preventDefault();
+                return;
+            }
+
             e.preventDefault();
             var targetSel = this.getTargetSelector(anchor);
-            this.navigate(href, { method: 'GET', target: targetSel, pushState: true });
+            var preserveScroll = anchor.hasAttribute('switch-preserve-scroll');
+            var transition = anchor.getAttribute('switch-transition');
+
+            this.navigate(href, {
+                method: 'GET',
+                target: targetSel,
+                pushState: true,
+                triggerElement: anchor,
+                preserveScroll: preserveScroll,
+                transition: transition
+            });
         },
 
         handleSubmit: function (e) {
             var form = e.target;
             if (!form || !this.isLiveElement(form)) return;
+
+            // Confirmation check
+            var confirmMsg = form.getAttribute('switch-confirm');
+            if (confirmMsg && !window.confirm(confirmMsg)) {
+                e.preventDefault();
+                return;
+            }
 
             e.preventDefault();
 
@@ -66,37 +118,129 @@
             var method = (form.getAttribute('method') || 'GET').toUpperCase();
             var targetSel = this.getTargetSelector(form);
             var formData = new FormData(form);
+            var preserveScroll = form.hasAttribute('switch-preserve-scroll');
+            var transition = form.getAttribute('switch-transition');
 
             this.navigate(action, {
                 method: method,
                 body: method === 'GET' ? null : formData,
                 target: targetSel,
-                pushState: true
+                pushState: true,
+                triggerElement: form,
+                preserveScroll: preserveScroll,
+                transition: transition
             });
         },
 
+        handleInput: function (e) {
+            var input = e.target;
+            if (!input.hasAttribute('switch-search') && !input.hasAttribute('switch-input')) return;
+
+            var url = input.getAttribute('switch-search') || input.getAttribute('switch-input') || window.location.href;
+            var debounceMs = parseInt(input.getAttribute('switch-debounce') || '300', 10);
+            var targetSel = this.getTargetSelector(input);
+            var name = input.getAttribute('name') || 'q';
+            var val = input.value;
+
+            clearTimeout(this.debounceTimers[input]);
+            this.debounceTimers[input] = setTimeout(function () {
+                var reqUrl = new URL(url, window.location.origin);
+                reqUrl.searchParams.set(name, val);
+
+                SwitchLive.navigate(reqUrl.toString(), {
+                    method: 'GET',
+                    target: targetSel,
+                    pushState: input.hasAttribute('switch-push-url'),
+                    triggerElement: input,
+                    preserveScroll: true
+                });
+            }, debounceMs);
+        },
+
+        handleChange: function (e) {
+            var select = e.target;
+            if (!select.hasAttribute('switch-change')) return;
+
+            var url = select.getAttribute('switch-change') || window.location.href;
+            var targetSel = this.getTargetSelector(select);
+            var name = select.getAttribute('name') || 'filter';
+            var val = select.value;
+
+            var reqUrl = new URL(url, window.location.origin);
+            reqUrl.searchParams.set(name, val);
+
+            this.navigate(reqUrl.toString(), {
+                method: 'GET',
+                target: targetSel,
+                pushState: select.hasAttribute('switch-push-url'),
+                triggerElement: select,
+                preserveScroll: true
+            });
+        },
+
+        handleMouseOver: function (e) {
+            var anchor = e.target.closest('a');
+            if (!anchor || !anchor.hasAttribute('switch-prefetch')) return;
+
+            var href = anchor.getAttribute('href');
+            if (!href || href.startsWith('#') || href.startsWith('javascript:') || this.prefetchCache[href]) return;
+
+            this.prefetch(href);
+        },
+
+        prefetch: function (url) {
+            var self = this;
+            fetch(url, {
+                method: 'GET',
+                headers: { 'X-Switch-Live': '1', 'X-Requested-With': 'XMLHttpRequest', 'X-Switch-Prefetch': '1' }
+            }).then(function (res) {
+                if (res.ok) {
+                    res.text().then(function (html) {
+                        self.prefetchCache[url] = {
+                            html: html,
+                            title: res.headers.get('X-Switch-Title'),
+                            target: res.headers.get('X-Switch-Target'),
+                            time: Date.now()
+                        };
+                    });
+                }
+            }).catch(function () {});
+        },
+
         handlePopState: function (e) {
-            if (e.state && e.state.switchLive) {
-                this.navigate(window.location.href, {
-                    method: 'GET',
-                    target: e.state.target || this.options.defaultTarget,
-                    pushState: false
-                });
-            } else {
-                this.navigate(window.location.href, {
-                    method: 'GET',
-                    target: this.options.defaultTarget,
-                    pushState: false
-                });
-            }
+            var state = e.state || {};
+            this.navigate(window.location.href, {
+                method: 'GET',
+                target: state.target || this.options.defaultTarget,
+                pushState: false,
+                restoreScroll: state.scrollY || 0
+            });
         },
 
         navigate: function (url, opts) {
             opts = opts || {};
             var method = opts.method || 'GET';
             var targetSel = opts.target || this.options.defaultTarget;
+            var self = this;
 
             this.dispatchEvent('switch:live:start', { url: url, options: opts });
+            this.showLoadingState(opts.triggerElement);
+            this.startProgressBar();
+
+            // Save scroll position for back navigation
+            if (window.history.state) {
+                var currentState = window.history.state;
+                currentState.scrollY = window.scrollY;
+                window.history.replaceState(currentState, '');
+            }
+
+            // Check prefetch cache (valid for 30 seconds)
+            if (method === 'GET' && this.prefetchCache[url] && (Date.now() - this.prefetchCache[url].time < 30000)) {
+                var cached = this.prefetchCache[url];
+                delete this.prefetchCache[url];
+                this.applyResponse(cached.html, targetSel, cached.title, cached.target, url, opts);
+                return;
+            }
 
             var headers = {
                 'X-Switch-Live': '1',
@@ -112,77 +256,424 @@
                 fetchOpts.body = opts.body;
             }
 
-            var self = this;
             document.body.classList.add(this.options.activeClass);
 
             fetch(url, fetchOpts)
                 .then(function (res) {
                     var titleHeader = res.headers.get('X-Switch-Title');
                     var targetHeader = res.headers.get('X-Switch-Target');
-                    if (targetHeader) targetSel = targetHeader;
+                    var redirectHeader = res.headers.get('X-Switch-Redirect');
+                    var toastHeader = res.headers.get('X-Switch-Toast');
+                    var eventHeader = res.headers.get('X-Switch-Event');
+                    var scrollHeader = res.headers.get('X-Switch-Scroll');
+
+                    if (redirectHeader) {
+                        self.navigate(redirectHeader, { method: 'GET', target: targetSel, pushState: true });
+                        return null;
+                    }
+
+                    if (toastHeader) {
+                        try {
+                            var toastData = JSON.parse(toastHeader);
+                            self.showToast(toastData.message, toastData.type);
+                        } catch (e) {
+                            self.showToast(toastHeader, 'info');
+                        }
+                    }
+
+                    if (eventHeader) {
+                        try {
+                            var evData = JSON.parse(eventHeader);
+                            self.dispatchEvent(evData.event, evData.detail || {});
+                        } catch (e) {}
+                    }
+
+                    if (scrollHeader === 'preserve') {
+                        opts.preserveScroll = true;
+                    }
 
                     return res.text().then(function (html) {
-                        return { ok: res.ok, status: res.status, html: html, title: titleHeader, url: res.url || url };
+                        return {
+                            ok: res.ok,
+                            status: res.status,
+                            html: html,
+                            title: titleHeader,
+                            target: targetHeader,
+                            url: res.url || url
+                        };
                     });
                 })
                 .then(function (data) {
-                    document.body.classList.remove(self.options.activeClass);
-
-                    if (data.ok) {
-                        self.updateDOM(data.html, targetSel, data.title);
-
-                        if (opts.pushState !== false) {
-                            window.history.pushState({ switchLive: true, target: targetSel }, '', data.url);
-                        }
-
-                        self.dispatchEvent('switch:live:success', { url: data.url, html: data.html });
-                    } else {
-                        self.dispatchEvent('switch:live:error', { status: data.status, html: data.html });
-                    }
-
-                    self.dispatchEvent('switch:live:finish', { url: data.url });
+                    if (!data) return;
+                    self.applyResponse(data.html, targetSel, data.title, data.target, data.url, opts);
                 })
                 .catch(function (err) {
+                    self.hideLoadingState(opts.triggerElement);
+                    self.finishProgressBar();
                     document.body.classList.remove(self.options.activeClass);
-                    self.dispatchEvent('switch:live:error', { error: err });
+                    self.dispatchEvent('switch:live:error', { error: err, url: url });
                     self.dispatchEvent('switch:live:finish', { url: url });
                 });
         },
 
-        updateDOM: function (html, targetSel, customTitle) {
+        applyResponse: function (html, targetSel, customTitle, customTarget, finalUrl, opts) {
+            var self = this;
+            var resolvedTarget = customTarget || targetSel;
+
+            this.hideLoadingState(opts.triggerElement);
+            this.finishProgressBar();
+            document.body.classList.remove(this.options.activeClass);
+
+            var targetEl = document.querySelector(resolvedTarget);
+
+            // Apply CSS page transitions if requested
+            if (opts.transition && targetEl) {
+                targetEl.classList.add('switch-transition-out', 'switch-transition-' + opts.transition);
+                setTimeout(function () {
+                    self.updateDOM(html, resolvedTarget, customTitle, opts);
+                    targetEl.classList.remove('switch-transition-out');
+                    targetEl.classList.add('switch-transition-in');
+                    setTimeout(function () {
+                        targetEl.classList.remove('switch-transition-in', 'switch-transition-' + opts.transition);
+                    }, 250);
+                }, 150);
+            } else {
+                this.updateDOM(html, resolvedTarget, customTitle, opts);
+            }
+
+            if (opts.pushState !== false) {
+                window.history.pushState({ switchLive: true, target: resolvedTarget }, '', finalUrl);
+            }
+
+            if (typeof opts.restoreScroll === 'number') {
+                window.scrollTo({ top: opts.restoreScroll, behavior: 'instant' });
+            } else if (!opts.preserveScroll) {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+
+            this.dispatchEvent('switch:live:success', { url: finalUrl, html: html });
+            this.dispatchEvent('switch:live:finish', { url: finalUrl });
+            this.scanDynamicDirectives();
+        },
+
+        updateDOM: function (html, targetSel, customTitle, opts) {
             var parser = new DOMParser();
             var doc = parser.parseFromString(html, 'text/html');
 
-            // 1. Update Title
+            // 1. Update Document Title
             if (customTitle) {
                 document.title = customTitle;
             } else if (doc.title) {
                 document.title = doc.title;
             }
 
-            // 2. Find target container
+            // 2. Find target element
             var targetEl = document.querySelector(targetSel);
             var sourceEl = doc.querySelector(targetSel);
 
-            if (targetEl && sourceEl) {
-                targetEl.innerHTML = sourceEl.innerHTML;
-            } else if (targetEl && !sourceEl) {
-                // If response is raw partial HTML
-                targetEl.innerHTML = html;
-            } else {
-                // Fallback: replace body content
+            if (!targetEl) {
                 if (doc.body && document.body) {
-                    document.body.innerHTML = doc.body.innerHTML;
+                    this.morphDOM(document.body, doc.body);
+                }
+                return;
+            }
+
+            var contentNode = sourceEl || (doc.body.children.length === 1 ? doc.body.firstElementChild : doc.body);
+
+            if (opts.append) {
+                while (contentNode.firstChild) {
+                    targetEl.appendChild(contentNode.firstChild);
+                }
+            } else if (opts.prepend) {
+                while (contentNode.lastChild) {
+                    targetEl.insertBefore(contentNode.lastChild, targetEl.firstChild);
+                }
+            } else {
+                this.morphDOM(targetEl, contentNode);
+            }
+        },
+
+        /**
+         * Ultra-fast lightweight DOM morphing algorithm that preserves input focus and state.
+         */
+        morphDOM: function (oldNode, newNode) {
+            if (!oldNode || !newNode) return;
+
+            // If tag names differ, replace entirely
+            if (oldNode.nodeType !== newNode.nodeType || oldNode.nodeName !== newNode.nodeName) {
+                oldNode.parentNode.replaceChild(newNode.cloneNode(true), oldNode);
+                return;
+            }
+
+            // Text node update
+            if (oldNode.nodeType === Node.TEXT_NODE) {
+                if (oldNode.textContent !== newNode.textContent) {
+                    oldNode.textContent = newNode.textContent;
+                }
+                return;
+            }
+
+            // Sync attributes
+            var oldAttrs = oldNode.attributes;
+            var newAttrs = newNode.attributes;
+
+            for (var i = newAttrs.length - 1; i >= 0; i--) {
+                var attr = newAttrs[i];
+                if (oldNode.getAttribute(attr.name) !== attr.value) {
+                    oldNode.setAttribute(attr.name, attr.value);
                 }
             }
 
-            // 3. Scroll to top
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            for (var j = oldAttrs.length - 1; j >= 0; j--) {
+                var oldAttr = oldAttrs[j];
+                if (!newNode.hasAttribute(oldAttr.name)) {
+                    oldNode.removeAttribute(oldAttr.name);
+                }
+            }
+
+            // Preserve input / textarea values and states
+            if (oldNode.nodeName === 'INPUT' || oldNode.nodeName === 'TEXTAREA') {
+                if (oldNode.value !== newNode.value && document.activeElement !== oldNode) {
+                    oldNode.value = newNode.value;
+                }
+                if (oldNode.type === 'checkbox' || oldNode.type === 'radio') {
+                    oldNode.checked = newNode.checked;
+                }
+                return;
+            }
+
+            if (oldNode.nodeName === 'SELECT') {
+                if (oldNode.value !== newNode.value && document.activeElement !== oldNode) {
+                    oldNode.value = newNode.value;
+                }
+                return;
+            }
+
+            // Morph children
+            var oldChildren = Array.prototype.slice.call(oldNode.childNodes);
+            var newChildren = Array.prototype.slice.call(newNode.childNodes);
+
+            var oldLen = oldChildren.length;
+            var newLen = newChildren.length;
+            var maxLen = Math.max(oldLen, newLen);
+
+            for (var k = 0; k < maxLen; k++) {
+                if (k >= oldLen) {
+                    oldNode.appendChild(newChildren[k].cloneNode(true));
+                } else if (k >= newLen) {
+                    oldNode.removeChild(oldChildren[k]);
+                } else {
+                    this.morphDOM(oldChildren[k], newChildren[k]);
+                }
+            }
+        },
+
+        scanDynamicDirectives: function () {
+            var self = this;
+
+            // 1. Polling: [switch-poll="3000"]
+            document.querySelectorAll('[switch-poll]').forEach(function (el) {
+                if (el._switchPollRegistered) return;
+                el._switchPollRegistered = true;
+
+                var interval = parseInt(el.getAttribute('switch-poll') || '5000', 10);
+                var url = el.getAttribute('switch-poll-url') || window.location.href;
+                var targetSel = self.getTargetSelector(el);
+
+                var pollId = setInterval(function () {
+                    if (!document.body.contains(el)) {
+                        clearInterval(pollId);
+                        return;
+                    }
+                    if (document.hidden) return;
+
+                    self.navigate(url, {
+                        method: 'GET',
+                        target: targetSel,
+                        pushState: false,
+                        preserveScroll: true
+                    });
+                }, interval);
+
+                self.activePolls.push(pollId);
+            });
+
+            // 2. Lazy Loading: [switch-lazy="/api/endpoint"]
+            if ('IntersectionObserver' in window) {
+                var lazyObserver = new IntersectionObserver(function (entries, observer) {
+                    entries.forEach(function (entry) {
+                        if (entry.isIntersecting) {
+                            var el = entry.target;
+                            var url = el.getAttribute('switch-lazy');
+                            if (url && !el._switchLazyLoaded) {
+                                el._switchLazyLoaded = true;
+                                observer.unobserve(el);
+                                var targetSel = self.getTargetSelector(el);
+                                self.navigate(url, {
+                                    method: 'GET',
+                                    target: targetSel,
+                                    pushState: false,
+                                    preserveScroll: true
+                                });
+                            }
+                        }
+                    });
+                }, { threshold: 0.1 });
+
+                document.querySelectorAll('[switch-lazy]').forEach(function (el) {
+                    if (!el._switchLazyLoaded) {
+                        lazyObserver.observe(el);
+                    }
+                });
+
+                // 3. Infinite Scroll: [switch-infinite="/posts?page=2"]
+                var infiniteObserver = new IntersectionObserver(function (entries, observer) {
+                    entries.forEach(function (entry) {
+                        if (entry.isIntersecting) {
+                            var sentinel = entry.target;
+                            var url = sentinel.getAttribute('switch-infinite');
+                            if (url && !sentinel._switchInfiniteLoading) {
+                                sentinel._switchInfiniteLoading = true;
+                                var targetSel = self.getTargetSelector(sentinel);
+                                var isPrepend = sentinel.hasAttribute('switch-prepend');
+
+                                self.navigate(url, {
+                                    method: 'GET',
+                                    target: targetSel,
+                                    pushState: sentinel.hasAttribute('switch-push-url'),
+                                    preserveScroll: true,
+                                    append: !isPrepend,
+                                    prepend: isPrepend
+                                });
+                            }
+                        }
+                    });
+                }, { rootMargin: '200px' });
+
+                document.querySelectorAll('[switch-infinite]').forEach(function (el) {
+                    infiniteObserver.observe(el);
+                });
+            }
+        },
+
+        pausePolling: function () {
+            // Polling paused automatically via document.hidden check
+        },
+
+        resumePolling: function () {
+            // Automatically resumes
+        },
+
+        showLoadingState: function (el) {
+            if (!el) return;
+            if (el.hasAttribute('switch-disable')) {
+                el.disabled = true;
+                el.setAttribute('aria-disabled', 'true');
+            }
+            var indicator = el.getAttribute('switch-indicator');
+            if (indicator) {
+                var indEl = document.querySelector(indicator);
+                if (indEl) indEl.classList.remove('switch-hidden');
+            }
+        },
+
+        hideLoadingState: function (el) {
+            if (!el) return;
+            if (el.hasAttribute('switch-disable')) {
+                el.disabled = false;
+                el.removeAttribute('aria-disabled');
+            }
+            var indicator = el.getAttribute('switch-indicator');
+            if (indicator) {
+                var indEl = document.querySelector(indicator);
+                if (indEl) indEl.classList.add('switch-hidden');
+            }
+        },
+
+        setupProgressBar: function () {
+            if (document.getElementById('switch-live-progress')) return;
+            var bar = document.createElement('div');
+            bar.id = 'switch-live-progress';
+            document.body.appendChild(bar);
+        },
+
+        startProgressBar: function () {
+            var bar = document.getElementById('switch-live-progress');
+            if (!bar) return;
+            bar.style.opacity = '1';
+            bar.style.width = '0%';
+            setTimeout(function () { bar.style.width = '35%'; }, 50);
+            setTimeout(function () { bar.style.width = '75%'; }, 200);
+        },
+
+        finishProgressBar: function () {
+            var bar = document.getElementById('switch-live-progress');
+            if (!bar) return;
+            bar.style.width = '100%';
+            setTimeout(function () {
+                bar.style.opacity = '0';
+                setTimeout(function () { bar.style.width = '0%'; }, 200);
+            }, 150);
+        },
+
+        setupToastContainer: function () {
+            if (document.getElementById('switch-live-toasts')) return;
+            var container = document.createElement('div');
+            container.id = 'switch-live-toasts';
+            document.body.appendChild(container);
+        },
+
+        showToast: function (message, type) {
+            type = type || 'info';
+            var container = document.getElementById('switch-live-toasts');
+            if (!container) return;
+
+            var toast = document.createElement('div');
+            toast.className = 'switch-toast switch-toast-' + type;
+            toast.innerHTML = '<span>' + message + '</span>';
+
+            container.appendChild(toast);
+            setTimeout(function () { toast.classList.add('switch-toast-visible'); }, 10);
+
+            setTimeout(function () {
+                toast.classList.remove('switch-toast-visible');
+                setTimeout(function () { toast.remove(); }, 300);
+            }, 4000);
+        },
+
+        injectStyles: function () {
+            if (document.getElementById('switch-live-styles')) return;
+            var style = document.createElement('style');
+            style.id = 'switch-live-styles';
+            style.textContent = [
+                '#switch-live-progress { position: fixed; top: 0; left: 0; height: 2.5px; background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899); z-index: 999999; transition: width 0.25s ease, opacity 0.25s ease; opacity: 0; pointer-events: none; }',
+                '.switch-hidden { display: none !important; }',
+                '.switch-transition-fade { transition: opacity 0.2s ease-in-out; }',
+                '.switch-transition-out { opacity: 0; transform: translateY(-4px); }',
+                '.switch-transition-in { opacity: 1; transform: translateY(0); }',
+                '#switch-live-toasts { position: fixed; bottom: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }',
+                '.switch-toast { padding: 12px 18px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #fff; background: #1e293b; box-shadow: 0 10px 25px rgba(0,0,0,0.2); transform: translateY(20px); opacity: 0; transition: transform 0.25s ease, opacity 0.25s ease; pointer-events: auto; }',
+                '.switch-toast-visible { transform: translateY(0); opacity: 1; }',
+                '.switch-toast-success { background: #10b981; }',
+                '.switch-toast-error { background: #ef4444; }',
+                '.switch-toast-warning { background: #f59e0b; }',
+                '.switch-toast-info { background: #3b82f6; }'
+            ].join('\n');
+            document.head.appendChild(style);
         },
 
         dispatchEvent: function (name, detail) {
             var event = new CustomEvent(name, { detail: detail, bubbles: true, cancelable: true });
             document.dispatchEvent(event);
+        },
+
+        debounce: function (func, wait) {
+            var timeout;
+            return function () {
+                var context = this, args = arguments;
+                clearTimeout(timeout);
+                timeout = setTimeout(function () { func.apply(context, args); }, wait);
+            };
         }
     };
 

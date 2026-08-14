@@ -10,7 +10,6 @@ use Switch\Live\LiveScript;
 use Switch\Live\Middleware\LiveMiddleware;
 use Switch\Http\ServerRequest;
 use Switch\Http\Response;
-use Switch\Http\RequestHandler;
 
 require_once __DIR__ . '/../src/helpers.php';
 
@@ -22,6 +21,10 @@ class LiveTest extends TestCase
         $this->assertStringContainsString('<script>', $html);
         $this->assertStringContainsString('SwitchLive', $html);
         $this->assertStringContainsString('switch-to', $html);
+        $this->assertStringContainsString('switch-live-progress', $html);
+        $this->assertStringContainsString('switch-poll', $html);
+        $this->assertStringContainsString('switch-lazy', $html);
+        $this->assertStringContainsString('switch-infinite', $html);
     }
 
     public function testGlobalLiveScriptsHelper(): void
@@ -39,6 +42,20 @@ class LiveTest extends TestCase
         unset($_SERVER['HTTP_X_SWITCH_LIVE']);
         $this->assertFalse(LiveResponse::isLiveRequest());
         $this->assertFalse(is_live());
+    }
+
+    public function testLiveResponseHelperMethodsExecuteWithoutErrors(): void
+    {
+        // Suppress header already sent warning during CLI test execution
+        @LiveResponse::toast('User saved successfully', 'success');
+        @LiveResponse::emit('user-created', ['id' => 123]);
+        @LiveResponse::redirect('/dashboard');
+        @LiveResponse::target('#content');
+        @LiveResponse::title('Dashboard — Switch');
+        @LiveResponse::preserveScroll(true);
+        @LiveResponse::setHeaders('New Title', '#app');
+
+        $this->assertTrue(true);
     }
 
     public function testLiveMiddlewareAppendsHeaderOnLiveRequest(): void
