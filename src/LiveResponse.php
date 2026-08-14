@@ -25,8 +25,10 @@ class LiveResponse
      */
     public static function toast(string $message, string $type = 'info'): void
     {
-        header('X-Switch-Live: 1');
-        header('X-Switch-Toast: ' . json_encode(['message' => $message, 'type' => $type], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        if (!headers_sent()) {
+            @header('X-Switch-Live: 1');
+            @header('X-Switch-Toast: ' . json_encode(['message' => $message, 'type' => $type], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        }
     }
 
     /**
@@ -37,8 +39,10 @@ class LiveResponse
      */
     public static function emit(string $event, array $detail = []): void
     {
-        header('X-Switch-Live: 1');
-        header('X-Switch-Event: ' . json_encode(['event' => $event, 'detail' => $detail], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        if (!headers_sent()) {
+            @header('X-Switch-Live: 1');
+            @header('X-Switch-Event: ' . json_encode(['event' => $event, 'detail' => $detail], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        }
     }
 
     /**
@@ -46,8 +50,10 @@ class LiveResponse
      */
     public static function redirect(string $url): void
     {
-        header('X-Switch-Live: 1');
-        header('X-Switch-Redirect: ' . $url);
+        if (!headers_sent()) {
+            @header('X-Switch-Live: 1');
+            @header('X-Switch-Redirect: ' . $url);
+        }
     }
 
     /**
@@ -55,8 +61,10 @@ class LiveResponse
      */
     public static function target(string $target): void
     {
-        header('X-Switch-Live: 1');
-        header('X-Switch-Target: ' . $target);
+        if (!headers_sent()) {
+            @header('X-Switch-Live: 1');
+            @header('X-Switch-Target: ' . $target);
+        }
     }
 
     /**
@@ -64,8 +72,10 @@ class LiveResponse
      */
     public static function title(string $title): void
     {
-        header('X-Switch-Live: 1');
-        header('X-Switch-Title: ' . $title);
+        if (!headers_sent()) {
+            @header('X-Switch-Live: 1');
+            @header('X-Switch-Title: ' . $title);
+        }
     }
 
     /**
@@ -73,9 +83,9 @@ class LiveResponse
      */
     public static function preserveScroll(bool $preserve = true): void
     {
-        if ($preserve) {
-            header('X-Switch-Live: 1');
-            header('X-Switch-Scroll: preserve');
+        if ($preserve && !headers_sent()) {
+            @header('X-Switch-Live: 1');
+            @header('X-Switch-Scroll: preserve');
         }
     }
 
@@ -84,12 +94,14 @@ class LiveResponse
      */
     public static function setHeaders(?string $title = null, ?string $target = null): void
     {
-        header('X-Switch-Live: 1');
-        if ($title !== null) {
-            header('X-Switch-Title: ' . $title);
-        }
-        if ($target !== null) {
-            header('X-Switch-Target: ' . $target);
+        if (!headers_sent()) {
+            @header('X-Switch-Live: 1');
+            if ($title !== null) {
+                @header('X-Switch-Title: ' . $title);
+            }
+            if ($target !== null) {
+                @header('X-Switch-Target: ' . $target);
+            }
         }
     }
 }
