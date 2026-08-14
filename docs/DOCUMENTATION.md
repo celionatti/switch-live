@@ -117,7 +117,7 @@ No npm install, no webpack, no Vite, no build step required.
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    {!! head()->render() !!}
+    <title>My App</title>
 </head>
 <body>
     <nav>

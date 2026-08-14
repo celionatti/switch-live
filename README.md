@@ -45,7 +45,7 @@ Include `@liveScripts` before the closing `</body>` tag in your layout view (`re
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    {!! head()->render() !!}
+    <title>My App</title>
 </head>
 <body>
     <!-- Main SPA Container -->
