@@ -68,34 +68,54 @@
         },
 
         handleClick: function (e) {
-            var anchor = e.target.closest('a');
-            if (!anchor) return;
+            var trigger = e.target.closest('a, button[switch-to], button[switch-action], [switch-click]');
+            if (!trigger) return;
 
-            if (!this.isLiveElement(anchor)) return;
+            var isAnchor = trigger.tagName === 'A';
+            if (isAnchor && !this.isLiveElement(trigger)) return;
 
-            var href = anchor.getAttribute('href');
+            var href = trigger.getAttribute('href') || trigger.getAttribute('switch-action') || trigger.getAttribute('switch-to') || trigger.getAttribute('switch-click');
             if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
 
             // Don't intercept external links or modified clicks (ctrl/cmd click)
-            if (anchor.target === '_blank' || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            if (trigger.target === '_blank' || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
 
             // Confirmation check
-            var confirmMsg = anchor.getAttribute('switch-confirm');
+            var confirmMsg = trigger.getAttribute('switch-confirm');
             if (confirmMsg && !window.confirm(confirmMsg)) {
                 e.preventDefault();
                 return;
             }
 
             e.preventDefault();
-            var targetSel = this.getTargetSelector(anchor);
-            var preserveScroll = anchor.hasAttribute('switch-preserve-scroll');
-            var transition = anchor.getAttribute('switch-transition');
+            var targetSel = this.getTargetSelector(trigger);
+            var preserveScroll = trigger.hasAttribute('switch-preserve-scroll') || !isAnchor;
+            var transition = trigger.getAttribute('switch-transition');
+            var method = (trigger.getAttribute('switch-method') || (trigger.hasAttribute('switch-action') ? 'POST' : 'GET')).toUpperCase();
+
+            var pushUrl = trigger.hasAttribute('switch-push-url') ? (trigger.getAttribute('switch-push-url') !== 'false') : isAnchor;
+
+            var body = null;
+            var rawData = trigger.getAttribute('switch-data');
+            if (rawData) {
+                try {
+                    var parsed = JSON.parse(rawData);
+                    var formData = new FormData();
+                    for (var k in parsed) {
+                        formData.append(k, parsed[k]);
+                    }
+                    body = formData;
+                } catch (err) {
+                    body = rawData;
+                }
+            }
 
             this.navigate(href, {
-                method: 'GET',
+                method: method,
+                body: body,
                 target: targetSel,
-                pushState: true,
-                triggerElement: anchor,
+                pushState: pushUrl,
+                triggerElement: trigger,
                 preserveScroll: preserveScroll,
                 transition: transition
             });
