@@ -698,6 +698,96 @@
                 clearTimeout(timeout);
                 timeout = setTimeout(function () { func.apply(context, args); }, wait);
             };
+        },
+
+        // Context API (React-like global and micro-state management)
+        contexts: {},
+        contextListeners: {},
+
+        createContext: function (name, defaultValue) {
+            if (!(name in this.contexts)) {
+                this.contexts[name] = defaultValue !== undefined ? defaultValue : null;
+                this.contextListeners[name] = [];
+            }
+            return this.contexts[name];
+        },
+
+        useContext: function (name, defaultValue) {
+            if (name.indexOf('.') !== -1) {
+                var parts = name.split('.');
+                var root = parts[0];
+                var val = this.contexts[root] !== undefined ? this.contexts[root] : defaultValue;
+                for (var i = 1; i < parts.length; i++) {
+                    if (val && typeof val === 'object' && parts[i] in val) {
+                        val = val[parts[i]];
+                    } else {
+                        return defaultValue;
+                    }
+                }
+                return val;
+            }
+            return this.contexts[name] !== undefined ? this.contexts[name] : defaultValue;
+        },
+
+        setContext: function (name, value) {
+            var oldVal = this.contexts[name];
+            if (typeof value === 'function') {
+                this.contexts[name] = value(oldVal);
+            } else {
+                this.contexts[name] = value;
+            }
+
+            var newVal = this.contexts[name];
+            this.notifyContext(name, newVal, oldVal);
+            this.syncContextDOM(name, newVal);
+            return newVal;
+        },
+
+        mutateContext: function (name, callback) {
+            return this.setContext(name, callback);
+        },
+
+        subscribeContext: function (name, callback) {
+            if (!this.contextListeners[name]) {
+                this.contextListeners[name] = [];
+            }
+            this.contextListeners[name].push(callback);
+            var self = this;
+            return function () {
+                var idx = self.contextListeners[name].indexOf(callback);
+                if (idx !== -1) {
+                    self.contextListeners[name].splice(idx, 1);
+                }
+            };
+        },
+
+        notifyContext: function (name, newVal, oldVal) {
+            var listeners = this.contextListeners[name] || [];
+            for (var i = 0; i < listeners.length; i++) {
+                try {
+                    listeners[i](newVal, oldVal);
+                } catch (e) {
+                    console.error('[SwitchLive] Context subscriber error:', e);
+                }
+            }
+            this.dispatchEvent('switch:context-change', { name: name, value: newVal, oldValue: oldVal });
+        },
+
+        syncContextDOM: function (name, value) {
+            // Update bound elements: [switch-bind="theme.mode"] or [data-bind="theme.mode"]
+            var elements = document.querySelectorAll('[switch-bind^="' + name + '"], [data-bind^="' + name + '"]');
+            for (var i = 0; i < elements.length; i++) {
+                var el = elements[i];
+                var bindPath = el.getAttribute('switch-bind') || el.getAttribute('data-bind');
+                var val = this.useContext(bindPath);
+                if (val !== undefined && val !== null) {
+                    if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') {
+                        el.value = val;
+                    } else {
+                        el.textContent = typeof val === 'object' ? JSON.stringify(val) : String(val);
+                    }
+                }
+            }
         }
     };
 
