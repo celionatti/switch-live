@@ -254,8 +254,13 @@
                 window.history.replaceState(currentState, '');
             }
 
+            // Clear prefetch cache on mutations or when noCache is requested
+            if (method !== 'GET' || opts.noCache) {
+                this.prefetchCache = {};
+            }
+
             // Check prefetch cache (valid for 30 seconds)
-            if (method === 'GET' && this.prefetchCache[url] && (Date.now() - this.prefetchCache[url].time < 30000)) {
+            if (method === 'GET' && !opts.noCache && this.prefetchCache[url] && (Date.now() - this.prefetchCache[url].time < 30000)) {
                 var cached = this.prefetchCache[url];
                 delete this.prefetchCache[url];
                 this.applyResponse(cached.html, targetSel, cached.title, cached.target, url, opts);
@@ -288,7 +293,8 @@
                     var scrollHeader = res.headers.get('X-Switch-Scroll');
 
                     if (redirectHeader) {
-                        self.navigate(redirectHeader, { method: 'GET', target: targetSel, pushState: true });
+                        self.prefetchCache = {};
+                        self.navigate(redirectHeader, { method: 'GET', target: targetSel, pushState: true, noCache: true });
                         return null;
                     }
 
@@ -433,9 +439,22 @@
                 return;
             }
 
+            // Comment node update
+            if (oldNode.nodeType === Node.COMMENT_NODE) {
+                if (oldNode.nodeValue !== newNode.nodeValue) {
+                    oldNode.nodeValue = newNode.nodeValue;
+                }
+                return;
+            }
+
+            // Only process attributes and element properties on ELEMENT_NODE (1)
+            if (oldNode.nodeType !== Node.ELEMENT_NODE) {
+                return;
+            }
+
             // Sync attributes
-            var oldAttrs = oldNode.attributes;
-            var newAttrs = newNode.attributes;
+            var oldAttrs = oldNode.attributes || [];
+            var newAttrs = newNode.attributes || [];
 
             for (var i = newAttrs.length - 1; i >= 0; i--) {
                 var attr = newAttrs[i];
