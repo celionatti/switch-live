@@ -178,13 +178,18 @@
         },
 
         handleChange: function (e) {
-            var select = e.target;
-            if (!select.hasAttribute('switch-change')) return;
+            var el = e.target;
+            if (el.hasAttribute('switch-upload') && el.type === 'file') {
+                this.handleFileUpload(el);
+                return;
+            }
 
-            var url = select.getAttribute('switch-change') || window.location.href;
-            var targetSel = this.getTargetSelector(select);
-            var name = select.getAttribute('name') || 'filter';
-            var val = select.value;
+            if (!el.hasAttribute('switch-change')) return;
+
+            var url = el.getAttribute('switch-change') || window.location.href;
+            var targetSel = this.getTargetSelector(el);
+            var name = el.getAttribute('name') || 'filter';
+            var val = el.value;
 
             var reqUrl = new URL(url, window.location.origin);
             reqUrl.searchParams.set(name, val);
@@ -192,8 +197,56 @@
             this.navigate(reqUrl.toString(), {
                 method: 'GET',
                 target: targetSel,
-                pushState: select.hasAttribute('switch-push-url'),
-                triggerElement: select,
+                pushState: el.hasAttribute('switch-push-url'),
+                triggerElement: el,
+                preserveScroll: true
+            });
+        },
+
+        handleFileUpload: function (input) {
+            if (!input.files || input.files.length === 0) return;
+            var file = input.files[0];
+
+            // 1. Client-Side Image Preview
+            var previewSel = input.getAttribute('switch-preview');
+            if (previewSel) {
+                var previewEl = document.querySelector(previewSel);
+                if (previewEl) {
+                    if (previewEl.tagName === 'IMG') {
+                        previewEl.src = URL.createObjectURL(file);
+                    } else {
+                        previewEl.style.backgroundImage = 'url(' + URL.createObjectURL(file) + ')';
+                    }
+                }
+            }
+
+            // 2. Upload Endpoint & Form Data
+            var uploadUrl = input.getAttribute('switch-upload');
+            if (!uploadUrl || uploadUrl === 'true' || uploadUrl === '') {
+                var form = input.closest('form');
+                uploadUrl = form ? (form.getAttribute('action') || window.location.href) : window.location.href;
+            }
+
+            var targetSel = this.getTargetSelector(input);
+            var formData = new FormData();
+            formData.append(input.name || 'file', file);
+
+            // Append additional form fields if inside a form
+            var parentForm = input.closest('form');
+            if (parentForm) {
+                var otherInputs = parentForm.querySelectorAll('input:not([type="file"]), select, textarea');
+                for (var i = 0; i < otherInputs.length; i++) {
+                    if (otherInputs[i].name && otherInputs[i].value) {
+                        formData.append(otherInputs[i].name, otherInputs[i].value);
+                    }
+                }
+            }
+
+            this.navigate(uploadUrl, {
+                method: 'POST',
+                body: formData,
+                target: targetSel,
+                triggerElement: input,
                 preserveScroll: true
             });
         },

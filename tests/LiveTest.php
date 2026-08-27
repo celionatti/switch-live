@@ -25,6 +25,8 @@ class LiveTest extends TestCase
         $this->assertStringContainsString('switch-poll', $html);
         $this->assertStringContainsString('switch-lazy', $html);
         $this->assertStringContainsString('switch-infinite', $html);
+        $this->assertStringContainsString('handleFileUpload', $html);
+        $this->assertStringContainsString('switch-upload', $html);
     }
 
     public function testGlobalLiveScriptsHelper(): void
