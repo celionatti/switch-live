@@ -27,6 +27,10 @@ class LiveTest extends TestCase
         $this->assertStringContainsString('switch-infinite', $html);
         $this->assertStringContainsString('handleFileUpload', $html);
         $this->assertStringContainsString('switch-upload', $html);
+        $this->assertStringContainsString('switch-sortable', $html);
+        $this->assertStringContainsString('switch-sortable-group', $html);
+        $this->assertStringContainsString('syncSortOrder', $html);
+        $this->assertStringContainsString('handleDragStart', $html);
     }
 
     public function testGlobalLiveScriptsHelper(): void

@@ -20,6 +20,7 @@
         debounceTimers: {},
         activePolls: [],
         observers: [],
+        dragState: { el: null, sourceContainer: null, sourceIndex: -1, id: null, sourceGroup: null },
 
         init: function () {
             this.injectStyles();
@@ -31,6 +32,11 @@
             document.addEventListener('input', this.handleInput.bind(this), false);
             document.addEventListener('change', this.handleChange.bind(this), false);
             document.addEventListener('mouseover', this.handleMouseOver.bind(this), false);
+            document.addEventListener('dragstart', this.handleDragStart.bind(this), false);
+            document.addEventListener('dragover', this.handleDragOver.bind(this), false);
+            document.addEventListener('dragleave', this.handleDragLeave.bind(this), false);
+            document.addEventListener('drop', this.handleDrop.bind(this), false);
+            document.addEventListener('dragend', this.handleDragEnd.bind(this), false);
             window.addEventListener('popstate', this.handlePopState.bind(this), false);
 
             this.scanDynamicDirectives();
@@ -248,6 +254,185 @@
                 target: targetSel,
                 triggerElement: input,
                 preserveScroll: true
+            });
+        },
+
+        handleDragStart: function (e) {
+            var container = e.target.closest('[switch-sortable], [switch-sortable-group]');
+            if (!container) return;
+
+            var item = e.target.closest('[draggable="true"], [data-id], tr, li, .sortable-item, [switch-sortable-item]');
+            if (!item || item === container || !container.contains(item)) return;
+
+            var handle = container.getAttribute('switch-handle');
+            if (handle && !e.target.closest(handle)) {
+                e.preventDefault();
+                return;
+            }
+
+            this.dragState = {
+                el: item,
+                sourceContainer: container,
+                sourceIndex: Array.prototype.indexOf.call(container.children, item),
+                id: item.dataset.id || item.getAttribute('data-id') || item.id || '',
+                sourceGroup: container.getAttribute('switch-sortable-group') || container.getAttribute('data-group') || null
+            };
+
+            item.classList.add('switch-dragging');
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', this.dragState.id);
+            }
+
+            this.dispatchEvent('switch:sort:start', { item: item, container: container, id: this.dragState.id });
+        },
+
+        handleDragOver: function (e) {
+            if (!this.dragState.el) return;
+
+            var container = e.target.closest('[switch-sortable], [switch-sortable-group]');
+            if (!container) return;
+
+            var targetGroup = container.getAttribute('switch-sortable-group') || container.getAttribute('data-group') || null;
+            if (this.dragState.sourceGroup && targetGroup && this.dragState.sourceGroup !== targetGroup) {
+                return;
+            }
+
+            e.preventDefault();
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'move';
+            }
+
+            var targetItem = e.target.closest('[draggable="true"], [data-id], tr, li, .sortable-item, [switch-sortable-item]');
+            if (targetItem && targetItem !== this.dragState.el && container.contains(targetItem)) {
+                var rect = targetItem.getBoundingClientRect();
+                var isVertical = rect.height >= rect.width;
+                var offset = isVertical ? (e.clientY - rect.top) / rect.height : (e.clientX - rect.left) / rect.width;
+
+                if (offset > 0.5) {
+                    targetItem.after(this.dragState.el);
+                } else {
+                    targetItem.before(this.dragState.el);
+                }
+            } else if (!targetItem && container.children.length === 0) {
+                container.appendChild(this.dragState.el);
+            }
+
+            container.classList.add('switch-drop-active');
+        },
+
+        handleDragLeave: function (e) {
+            var container = e.target.closest('[switch-sortable], [switch-sortable-group]');
+            if (container && !container.contains(e.relatedTarget)) {
+                container.classList.remove('switch-drop-active');
+            }
+        },
+
+        handleDrop: function (e) {
+            if (!this.dragState.el) return;
+            e.preventDefault();
+
+            var container = e.target.closest('[switch-sortable], [switch-sortable-group]');
+            if (!container) return;
+
+            container.classList.remove('switch-drop-active');
+            this.dragState.el.classList.remove('switch-dragging');
+
+            var targetGroup = container.getAttribute('switch-sortable-group') || container.getAttribute('data-group') || null;
+            var targetIndex = Array.prototype.indexOf.call(container.children, this.dragState.el);
+            var isChanged = (container !== this.dragState.sourceContainer) || (targetIndex !== this.dragState.sourceIndex);
+
+            if (isChanged) {
+                var endpoint = container.getAttribute('switch-sortable') || container.getAttribute('switch-sortable-group') || container.getAttribute('switch-action') || window.location.href;
+
+                var childNodes = container.querySelectorAll('[data-id], [switch-sortable-item]');
+                var order = [];
+                if (childNodes.length > 0) {
+                    for (var i = 0; i < childNodes.length; i++) {
+                        var cid = childNodes[i].dataset.id || childNodes[i].getAttribute('data-id') || childNodes[i].id;
+                        if (cid) order.push(cid);
+                    }
+                } else {
+                    for (var j = 0; j < container.children.length; j++) {
+                        var elId = container.children[j].dataset.id || container.children[j].getAttribute('data-id') || container.children[j].id;
+                        if (elId) order.push(elId);
+                    }
+                }
+
+                var payload = {
+                    id: this.dragState.id,
+                    source_group: this.dragState.sourceGroup,
+                    target_group: targetGroup,
+                    ids: order,
+                    order: order,
+                    old_index: this.dragState.sourceIndex,
+                    new_index: targetIndex
+                };
+
+                this.dispatchEvent('switch:sort:change', payload);
+
+                var draggedEl = this.dragState.el;
+                var srcContainer = this.dragState.sourceContainer;
+                var srcIndex = this.dragState.sourceIndex;
+
+                var debounceMs = parseInt(container.getAttribute('switch-debounce') || '250', 10);
+                var timerKey = 'sortable_' + (targetGroup || 'default');
+                clearTimeout(this.debounceTimers[timerKey]);
+                this.debounceTimers[timerKey] = setTimeout(function () {
+                    SwitchLive.syncSortOrder(endpoint, payload, draggedEl, srcContainer, srcIndex);
+                }, debounceMs);
+            }
+        },
+
+        handleDragEnd: function (e) {
+            if (this.dragState.el) {
+                this.dragState.el.classList.remove('switch-dragging');
+            }
+            document.querySelectorAll('.switch-drop-active').forEach(function (el) {
+                el.classList.remove('switch-drop-active');
+            });
+            this.dispatchEvent('switch:sort:end', { item: this.dragState.el });
+            this.dragState = { el: null, sourceContainer: null, sourceIndex: -1, id: null, sourceGroup: null };
+        },
+
+        syncSortOrder: function (endpoint, payload, itemEl, originalContainer, originalIndex) {
+            var self = this;
+            fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Switch-Live': '1',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify(payload)
+            }).then(function (res) {
+                var toastHeader = res.headers.get('X-Switch-Toast');
+                if (toastHeader) {
+                    try {
+                        var toastData = JSON.parse(toastHeader);
+                        self.showToast(toastData.message, toastData.type);
+                    } catch (e) {}
+                }
+
+                if (!res.ok) {
+                    throw new Error('Server returned ' + res.status);
+                }
+
+                self.dispatchEvent('switch:sorted', payload);
+            }).catch(function (err) {
+                // Revert DOM position on failure
+                if (originalContainer && itemEl) {
+                    if (originalContainer.contains(itemEl) === false || originalContainer.children[originalIndex] !== itemEl) {
+                        if (originalContainer.children[originalIndex]) {
+                            originalContainer.insertBefore(itemEl, originalContainer.children[originalIndex]);
+                        } else {
+                            originalContainer.appendChild(itemEl);
+                        }
+                    }
+                }
+
+                self.showToast('Failed to update sort order. Changes reverted.', 'error');
+                self.dispatchEvent('switch:sort:error', { error: err, payload: payload });
             });
         },
 
@@ -646,6 +831,21 @@
                     infiniteObserver.observe(el);
                 });
             }
+
+            // 4. Sortable Directives: [switch-sortable], [switch-sortable-group]
+            document.querySelectorAll('[switch-sortable], [switch-sortable-group]').forEach(function (container) {
+                var items = container.children;
+                var handle = container.getAttribute('switch-handle');
+                for (var s = 0; s < items.length; s++) {
+                    var item = items[s];
+                    if (!item.hasAttribute('draggable') && !item.hasAttribute('switch-no-drag')) {
+                        item.setAttribute('draggable', 'true');
+                    }
+                    if (!handle && !item.classList.contains('cursor-grab')) {
+                        item.classList.add('cursor-grab');
+                    }
+                }
+            });
         },
 
         pausePolling: function () {
@@ -750,6 +950,11 @@
                 '.switch-toast-error { background: #ef4444; }',
                 '.switch-toast-warning { background: #f59e0b; }',
                 '.switch-toast-info { background: #3b82f6; }',
+                '.switch-dragging { opacity: 0.4 !important; transform: scale(0.98); }',
+                '.switch-drop-active { outline: 2px dashed #6366f1 !important; outline-offset: -2px; }',
+                '.cursor-grab { cursor: grab; user-select: none; }',
+                '.cursor-grab:active { cursor: grabbing; }',
+                '[switch-sortable] > *, [switch-sortable-group] > * { transition: transform 0.12s ease; }',
                 '@media (max-width: 640px) {',
                 '    #switch-live-toasts { left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); width: auto; max-width: none; align-items: stretch; }',
                 '    .switch-toast { text-align: center; font-size: 13.5px; padding: 10px 14px; border-radius: 10px; }',
