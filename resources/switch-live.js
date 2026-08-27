@@ -20,12 +20,24 @@
         debounceTimers: {},
         activePolls: [],
         observers: [],
-        dragState: { el: null, sourceContainer: null, sourceIndex: -1, id: null, sourceGroup: null },
+        activePointerTarget: null,
+        dragState: { el: null, sourceContainer: null, sourceIndex: -1, id: null, sourceGroup: null, groupName: null },
 
         init: function () {
             this.injectStyles();
             this.setupProgressBar();
             this.setupToastContainer();
+
+            var self = this;
+            document.addEventListener('pointerdown', function (e) {
+                self.activePointerTarget = e.target;
+            }, true);
+            document.addEventListener('mousedown', function (e) {
+                self.activePointerTarget = e.target;
+            }, true);
+            document.addEventListener('touchstart', function (e) {
+                self.activePointerTarget = e.target;
+            }, true);
 
             document.addEventListener('click', this.handleClick.bind(this), false);
             document.addEventListener('submit', this.handleSubmit.bind(this), false);
@@ -261,13 +273,17 @@
             var container = e.target.closest('[switch-sortable], [switch-sortable-group]');
             if (!container) return;
 
-            var item = e.target.closest('[draggable="true"], [data-id], tr, li, .sortable-item, [switch-sortable-item]');
+            var item = e.target.closest('[data-id], tr, li, .sortable-item, .task-card, [switch-sortable-item], [draggable="true"]');
             if (!item || item === container || !container.contains(item)) return;
 
             var handle = container.getAttribute('switch-handle');
-            if (handle && !e.target.closest(handle)) {
-                e.preventDefault();
-                return;
+            if (handle) {
+                var pointerTarget = this.activePointerTarget || e.target;
+                var hasHandleMatch = pointerTarget && (pointerTarget.closest(handle) || (pointerTarget.matches && pointerTarget.matches(handle)));
+                if (!hasHandleMatch) {
+                    e.preventDefault();
+                    return;
+                }
             }
 
             this.dragState = {
@@ -275,10 +291,16 @@
                 sourceContainer: container,
                 sourceIndex: Array.prototype.indexOf.call(container.children, item),
                 id: item.dataset.id || item.getAttribute('data-id') || item.id || '',
-                sourceGroup: container.getAttribute('switch-sortable-group') || container.getAttribute('data-group') || null
+                sourceGroup: container.getAttribute('data-group') || container.getAttribute('switch-sortable-group') || null,
+                groupName: container.getAttribute('switch-sortable-group') || null
             };
 
-            item.classList.add('switch-dragging');
+            setTimeout(function () {
+                if (item && item.classList) {
+                    item.classList.add('switch-dragging');
+                }
+            }, 0);
+
             if (e.dataTransfer) {
                 e.dataTransfer.effectAllowed = 'move';
                 e.dataTransfer.setData('text/plain', this.dragState.id);
@@ -293,8 +315,9 @@
             var container = e.target.closest('[switch-sortable], [switch-sortable-group]');
             if (!container) return;
 
-            var targetGroup = container.getAttribute('switch-sortable-group') || container.getAttribute('data-group') || null;
-            if (this.dragState.sourceGroup && targetGroup && this.dragState.sourceGroup !== targetGroup) {
+            // Group validation for cross-container dragging
+            var targetGroupName = container.getAttribute('switch-sortable-group') || null;
+            if (this.dragState.groupName && targetGroupName && this.dragState.groupName !== targetGroupName) {
                 return;
             }
 
@@ -303,27 +326,34 @@
                 e.dataTransfer.dropEffect = 'move';
             }
 
-            var targetItem = e.target.closest('[draggable="true"], [data-id], tr, li, .sortable-item, [switch-sortable-item]');
-            if (targetItem && targetItem !== this.dragState.el && container.contains(targetItem)) {
+            var draggedEl = this.dragState.el;
+            var targetItem = e.target.closest('[data-id], tr, li, .sortable-item, .task-card, [switch-sortable-item]');
+
+            if (targetItem && targetItem !== draggedEl && container.contains(targetItem)) {
                 var rect = targetItem.getBoundingClientRect();
                 var isVertical = rect.height >= rect.width;
                 var offset = isVertical ? (e.clientY - rect.top) / rect.height : (e.clientX - rect.left) / rect.width;
 
                 if (offset > 0.5) {
-                    targetItem.after(this.dragState.el);
+                    targetItem.after(draggedEl);
                 } else {
-                    targetItem.before(this.dragState.el);
+                    targetItem.before(draggedEl);
                 }
-            } else if (!targetItem && container.children.length === 0) {
-                container.appendChild(this.dragState.el);
+            } else if (container.contains(e.target) && (!targetItem || targetItem === draggedEl)) {
+                if (!container.contains(draggedEl)) {
+                    container.appendChild(draggedEl);
+                }
             }
 
+            document.querySelectorAll('.switch-drop-active').forEach(function (c) {
+                if (c !== container) c.classList.remove('switch-drop-active');
+            });
             container.classList.add('switch-drop-active');
         },
 
         handleDragLeave: function (e) {
             var container = e.target.closest('[switch-sortable], [switch-sortable-group]');
-            if (container && !container.contains(e.relatedTarget)) {
+            if (container && (!e.relatedTarget || !container.contains(e.relatedTarget))) {
                 container.classList.remove('switch-drop-active');
             }
         },
@@ -333,28 +363,29 @@
             e.preventDefault();
 
             var container = e.target.closest('[switch-sortable], [switch-sortable-group]');
+            if (!container) {
+                container = this.dragState.el.parentElement;
+            }
             if (!container) return;
 
             container.classList.remove('switch-drop-active');
-            this.dragState.el.classList.remove('switch-dragging');
+            if (this.dragState.el && this.dragState.el.classList) {
+                this.dragState.el.classList.remove('switch-dragging');
+            }
 
-            var targetGroup = container.getAttribute('switch-sortable-group') || container.getAttribute('data-group') || null;
+            var targetGroup = container.getAttribute('data-group') || container.getAttribute('switch-sortable-group') || null;
             var targetIndex = Array.prototype.indexOf.call(container.children, this.dragState.el);
             var isChanged = (container !== this.dragState.sourceContainer) || (targetIndex !== this.dragState.sourceIndex);
 
             if (isChanged) {
-                var endpoint = container.getAttribute('switch-sortable') || container.getAttribute('switch-sortable-group') || container.getAttribute('switch-action') || window.location.href;
+                var endpoint = container.getAttribute('switch-sortable') || container.getAttribute('switch-action') || window.location.href;
 
-                var childNodes = container.querySelectorAll('[data-id], [switch-sortable-item]');
+                var childNodes = container.children;
                 var order = [];
-                if (childNodes.length > 0) {
-                    for (var i = 0; i < childNodes.length; i++) {
-                        var cid = childNodes[i].dataset.id || childNodes[i].getAttribute('data-id') || childNodes[i].id;
-                        if (cid) order.push(cid);
-                    }
-                } else {
-                    for (var j = 0; j < container.children.length; j++) {
-                        var elId = container.children[j].dataset.id || container.children[j].getAttribute('data-id') || container.children[j].id;
+                for (var j = 0; j < childNodes.length; j++) {
+                    var child = childNodes[j];
+                    if (child.nodeType === 1 && !child.hasAttribute('switch-no-drag')) {
+                        var elId = child.dataset.id || child.getAttribute('data-id') || child.id;
                         if (elId) order.push(elId);
                     }
                 }
@@ -385,14 +416,15 @@
         },
 
         handleDragEnd: function (e) {
-            if (this.dragState.el) {
+            if (this.dragState.el && this.dragState.el.classList) {
                 this.dragState.el.classList.remove('switch-dragging');
             }
             document.querySelectorAll('.switch-drop-active').forEach(function (el) {
                 el.classList.remove('switch-drop-active');
             });
             this.dispatchEvent('switch:sort:end', { item: this.dragState.el });
-            this.dragState = { el: null, sourceContainer: null, sourceIndex: -1, id: null, sourceGroup: null };
+            this.dragState = { el: null, sourceContainer: null, sourceIndex: -1, id: null, sourceGroup: null, groupName: null };
+            this.activePointerTarget = null;
         },
 
         syncSortOrder: function (endpoint, payload, itemEl, originalContainer, originalIndex) {
@@ -838,11 +870,28 @@
                 var handle = container.getAttribute('switch-handle');
                 for (var s = 0; s < items.length; s++) {
                     var item = items[s];
-                    if (!item.hasAttribute('draggable') && !item.hasAttribute('switch-no-drag')) {
-                        item.setAttribute('draggable', 'true');
-                    }
-                    if (!handle && !item.classList.contains('cursor-grab')) {
-                        item.classList.add('cursor-grab');
+                    if (item.nodeType === 1 && !item.hasAttribute('switch-no-drag')) {
+                        if (!item.hasAttribute('draggable')) {
+                            item.setAttribute('draggable', 'true');
+                        }
+                        if (handle) {
+                            var handleEls = item.querySelectorAll(handle);
+                            if (handleEls.length > 0) {
+                                handleEls.forEach(function (h) {
+                                    if (!h.classList.contains('cursor-grab')) {
+                                        h.classList.add('cursor-grab');
+                                    }
+                                });
+                            } else if (item.matches && item.matches(handle)) {
+                                if (!item.classList.contains('cursor-grab')) {
+                                    item.classList.add('cursor-grab');
+                                }
+                            }
+                        } else {
+                            if (!item.classList.contains('cursor-grab')) {
+                                item.classList.add('cursor-grab');
+                            }
+                        }
                     }
                 }
             });
@@ -950,10 +999,11 @@
                 '.switch-toast-error { background: #ef4444; }',
                 '.switch-toast-warning { background: #f59e0b; }',
                 '.switch-toast-info { background: #3b82f6; }',
-                '.switch-dragging { opacity: 0.4 !important; transform: scale(0.98); }',
+                '.switch-dragging { opacity: 0.45 !important; transform: scale(0.98); }',
                 '.switch-drop-active { outline: 2px dashed #6366f1 !important; outline-offset: -2px; }',
-                '.cursor-grab { cursor: grab; user-select: none; }',
-                '.cursor-grab:active { cursor: grabbing; }',
+                '[draggable="true"] { -webkit-user-drag: element; }',
+                '.cursor-grab, [draggable="true"], .drag-handle { cursor: grab; user-select: none; -webkit-user-select: none; }',
+                '.cursor-grab:active, [draggable="true"]:active, .drag-handle:active { cursor: grabbing; }',
                 '[switch-sortable] > *, [switch-sortable-group] > * { transition: transform 0.12s ease; }',
                 '@media (max-width: 640px) {',
                 '    #switch-live-toasts { left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); width: auto; max-width: none; align-items: stretch; }',
